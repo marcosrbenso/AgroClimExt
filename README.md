@@ -1,2 +1,2 @@
 # AgroClimExt
-Calculation of climate extreme indices for agricultural impact studies
+R-scropts for calculation of climate extreme indices for agricultural impact studies

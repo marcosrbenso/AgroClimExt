@@ -5,4 +5,4 @@
 
 ## Data references
 
-The data used in this repo can be found in <!-- [![DOI](https://sandbox.zenodo.org/badge/DOI/10.5072/zenodo.78423.svg)](https://handle.stage.datacite.org/10.5072/zenodo.78423) -->
+The data used in this repo can be found in <!-- [![DOI](https://sandbox.zenodo.org/badge/DOI/10.5281/zenodo.12612860.svg)](https://handle.stage.datacite.org/10.5281/zenodo.12612860) -->

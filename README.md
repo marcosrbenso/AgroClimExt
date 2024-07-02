@@ -1,5 +1,5 @@
 [![DOI:10.5194/egusphere-2023-3002](http://img.shields.io/badge/DOI-10.5194/egusphere.2023.3002-0080ff.svg)](https://doi.org/10.5194/egusphere-2023-3002)
-
+![alt text](https://github.com/marcosrbenso/ClimateImpactML/blob/main/Fig_readme_flowchart.png)
 # Machine Learning (ML) models for explaining the impact of climate risks on crop yield
 
 **ClimateImpactML** is a GitHub repository that contains instructions to reproduce results from *"A data-driven framework for assessing climatic impact-drivers in the context of food security"*. which is under review in the journal Natural Hazards and Earth Systems Science (NHESS) [![DOI:10.5194/egusphere-2023-3002](http://img.shields.io/badge/DOI-10.5194/egusphere.2023.3002-0080ff.svg)](https://doi.org/10.5194/egusphere-2023-3002)
@@ -22,10 +22,10 @@ This script was written to process annual crop yield data from different sources
 
 The following packages are required to run this code.
 
-- []()
-- []()
-- []()
-- []()
+- [blockCV](https://cran.r-project.org/web/packages/blockCV/blockCV.pdf)
+- [geobr](https://cran.r-project.org/web/packages/geobr/geobr.pdf)
+- [sp](https://cran.r-project.org/web/packages/sp/index.html)
+- [tidyverse](https://cran.r-project.org/web/packages/tidyverse/index.html)
 
 ### 02.RF_Model1.R
 

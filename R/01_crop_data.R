@@ -22,6 +22,11 @@ library(geobr)
 library(sf)
 library(sp)
 library(textclean)
+library(blockCV)
+library(CAST)
+library(Kendall)
+library(lmtest) # for Breusch-Godfrey Test heteroscedasticity
+library(data.table)
 
 #======================================================================================================
 # Set working directory with data
@@ -113,77 +118,80 @@ year_min <- 10 # minimum number of years to include municipality in the dataset
 # Test for trend
 
 soybean <- soybean %>%
-  group_by(City,dataset) %>%
-  mutate(trend = ifelse(Kendall(year, yield)$sl[1] < 0.05,"Trend","No Trend"),
-         tau = Kendall(year, yield)$tau[1])
+  filter(is.na(Yield)==F) %>%
+  group_by(City,UF,dataset) %>%
+  filter(length(City) > year_min) %>%
+  mutate(trend = ifelse(Kendall(Year, Yield)$sl[1] < 0.05,"Trend","No Trend"),
+         tau = Kendall(Year, Yield)$tau[1])
 
 maize <- maize %>%
-  group_by(City,dataset) %>%
-  mutate(trend = ifelse(Kendall(year, yield)$sl[1] < 0.05,"Trend","No Trend"),
-         tau = Kendall(year, yield)$tau[1])
+  filter(is.na(Yield)==F) %>%
+  group_by(City,UF,dataset) %>%
+  filter(length(City) > year_min) %>%
+  mutate(trend = ifelse(Kendall(Year, Yield)$sl[1] < 0.05,"Trend","No Trend"),
+         tau = Kendall(Year, Yield)$tau[1])
 
 # Detrend series
 
-crop_yield_detrend <- function(yield,year){
-  model <- loess(yield~year, se = TRUE)
-  yield-predict(model,data.frame(yield=yield,year=year))
+crop_yield_detrend <- function(Yield,Year){
+  model <- loess(Yield~Year, se = TRUE)
+  Yield-predict(model,data.frame(Yield=Yield,Year=Year))
 }
 
 soybean <- soybean %>%
-  group_by(City,dataset) %>%
-  filter(is.na(yield)==F) %>%
-  group_by(code_muni) %>%
-  filter(length(code_muni) > year_min) %>%
-  mutate(yield_detrended = crop_yield_detrend(yield,year))
+  group_by(City,UF,dataset) %>%
+  filter(length(City) > year_min) %>%
+  mutate(Yield_detrended = crop_yield_detrend(Yield,Year))
 
 maize <- maize %>%
-  group_by(City,dataset) %>%
-  filter(is.na(yield)==F) %>%
-  group_by(code_muni) %>%
-  filter(length(code_muni) > year_min) %>%
-  mutate(yield_detrended = crop_yield_detrend(yield,year))
-
+  group_by(City,UF,dataset) %>%
+  filter(length(City) > year_min) %>%
+  mutate(yield_detrended = crop_yield_detrend(Yield,Year))
 
 
 #======================================================================================================
 # Test for Heteroscedasticity
 
 soybean <- soybean %>%
-  group_by(City,dataset) %>%
-  mutate(Hetero = bptest(yield~year)$p.value,
+  group_by(City,UF,dataset) %>%
+  mutate(Hetero = bptest(Yield~Year)$p.value,
          Hetero = ifelse(Hetero < 0.05,"Heteroskedastic","Homoscedastic"))
 
 maize <- maize %>%
-  group_by(City,dataset) %>%
-  mutate(Hetero = bptest(yield~year)$p.value,
+  group_by(City,UF,dataset) %>%
+  mutate(Hetero = bptest(Yield~Year)$p.value,
          Hetero = ifelse(Hetero < 0.05,"Heteroskedastic","Homoscedastic"))
 
 
 # Remove Heteroscedasticity
-crop_yield_heteroscedasticity <- function(yield,year,hetero){
+crop_yield_heteroscedasticity <- function(Yield,Year,hetero){
 
-  model <- loess(yield~year)
-  y_max <- max(year)-1
+  model <- loess(Yield~Year)
+  y_max <- max(Year)-1
   if(hetero == "Homoscedastic"){
 
-    (yield-predict(model,data.frame(yield=yield,year=year)))+
-      predict(model,data.frame(year=y_max))
+    (Yield-predict(model,data.frame(Yield=Yield,Year=Year)))+
+      predict(model,data.frame(Year=y_max))
 
   }else{
 
-    (1+(yield-predict(model,data.frame(yield=yield,year=year)))/
-       predict(model,data.frame(yield=yield,year=year)))*
-      predict(model,data.frame(year=y_max))
+    (1+(Yield-predict(model,data.frame(Yield=Yield,Year=Year)))/
+       predict(model,data.frame(Yield=Yield,Year=Year)))*
+      predict(model,data.frame(Year=y_max))
   }
 }
 
+soybean %>%
+  group_by(City,UF,dataset) %>%
+  summarise(n = n()) %>% summary()
+
 soybean <- soybean %>%
-  group_by(City,dataset) %>%
-  mutate(yield_corrected = crop_yield_anomaly(yield,year,Hetero))
+  group_by(City,UF,dataset) %>%
+  mutate(Yield_corrected = crop_yield_heteroscedasticity(Yield,Year,first(Hetero)))
 
 maize <- maize %>%
-  group_by(City,dataset) %>%
-  mutate(yield_corrected = crop_yield_anomaly(yield,year,Hetero))
+  group_by(City,UF,dataset) %>%
+  mutate(Yield_corrected = crop_yield_heteroscedasticity(Yield,Year,first(Hetero)))
 
 #======================================================================================================
 # Remove outliers and calculate spatial blocks
@@ -209,8 +217,3 @@ dataset_maize <- merge(maize,
                  indices_soy,
                  by.x = c("code_muni","Year"),
                  by.y = c("name_mn","harvesting"))%>% na.omit()
-
-
-
-
-

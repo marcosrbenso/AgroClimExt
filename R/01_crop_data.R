@@ -1,251 +1,242 @@
-#  Random forest model for crop yield losses predictions
+#  Crop yield data warping and preparing
 
-# The objective of this script is to run RF model
-# for evaluating the impact of climate extremes on crop yields
+# Three datasets are use for Soybean and Maize second cycle in Brazil
+## Deral - Department of Rural Economics of Paraná State-Brazil
+## IBGE - Brazilian Institute of Geography and Satistics
+## GDHY - Global Dataset on Historical Yields
+
+# Datasets are agregated at municipality level
+# The objective of this script is to prepare data for Machine Learning Models
 
 # Marcos Benso, Ago 2024
 
 
+rm(list=ls())
+gc()
+
 #======================================================================================================
 # Load packages
 
-library(doParallel)
-library(varImp)
+library(tidyverse)
+library(geobr)
 library(sf)
-library(caret)
-
-
-#======================================================================================================
-# Output file
-
-output <- "C:\\Projetos\\ClimateImpactML\\Data\\Output\\Step1\\"
-
-
-#======================================================================================================
-# Pre-processing function
-
-filter <-function(dataset_sub){
-  dataset_sub <- dataset_sub %>% ungroup() %>%
-    select(-c(Year,Hetero,tau,
-              code_muni,Yield_detrended,
-              City,UF,Yield,code_state,lat,geom,
-              clay,silt,sand))
-  #------------------------------------------------------
-  # Remove near Zero variance features
-  nzv <- nearZeroVar(dataset_sub)
-
-
-
-  filteredDescr <- dataset_sub[, -nzv]
-
-  #------------------------------------------------------
-  # Remove highly correlated variables
-  descrCor <-  cor(filteredDescr)
-
-  highCorr <- sum(abs(descrCor[upper.tri(descrCor)]) > .99)
-
-  highlyCorDescr <- findCorrelation(descrCor, cutoff = .99)
-
-  filteredDescr <- filteredDescr[,-highlyCorDescr]
-  return(colnames(filteredDescr))
-}
-
-
-nculsters <- 20
-
-cl <- makePSOCKcluster(nculsters)
-registerDoParallel(cl)
-
-
-
+library(sp)
+library(textclean)
+library(blockCV)
+library(CAST)
+library(Kendall)
+library(lmtest) # for Breusch-Godfrey Test heteroscedasticity
+library(data.table)
 
 #======================================================================================================
-#======================================================================================================
-# Run models
+# Set working directory with data
 
-
-
-#======================================================================================================
-# Soybean
+setwd("C:\\Users\\marco\\Downloads\\agroclimx\\AgroClimExt")
 
 #======================================================================================================
-# Create empty vectors and lists
+# Load data
 
-n_models <- dataset_soybean[,c("UF","dataset")] %>% unique()
+data.maize.ibge <- read.csv("Database/Crop/Processed_Data/ibge_maize.csv")
+data.soy.ibge <- read.csv("Database/Crop/Processed_Data/ibge_soy.csv")
 
-list_length <- n_models %>% nrow()
+data.maize.deral <- read.csv("Database/Crop/Processed_Data/deral_maize.csv")
+data.soy.deral <- read.csv("Database/Crop/Processed_Data/deral_soybean.csv")
 
-RFModel_soybean <- vector('list', list_length)
-var_importance <-  vector('list', list_length)
-performance <-  vector('list', list_length)
+data.maize.gdhy <- read.csv("Database/Crop/Processed_Data/gdhy.maize.csv")
+data.soy.gdhy <- read.csv("Database/Crop/Processed_Data/gdhy.soy.csv")
 
-for(i in 1:list_length){
+#======================================================================================================
+# Organize data.frame
 
-  #======================================================================================================
-  # Sub-set dataset
+data.maize.ibge <- data.maize.ibge[,c('State','City','year','yield')]
+colnames(data.maize.ibge) <- c("UF","City","Year","Yield")
+data.maize.ibge$dataset = "IBGE"
 
-  dataset_sub <- dataset_soybean %>%
-    subset(UF == n_models[i,]$UF &
-           dataset == n_models[i,]$dataset) %>%
-    subset(Year > 1997)
+data.soy.ibge <- data.soy.ibge[,c('State','City','year','yield')]
+colnames(data.soy.ibge) <- c("UF","City","Year","Yield")
+data.soy.ibge$dataset = "IBGE"
 
-  #======================================================================================================
-  # Pre-process
+data.maize.deral <- data.maize.deral[,c('Município','harvest','yield')]
+colnames(data.maize.deral) <- c("City","Year","Yield")
+data.maize.deral$UF <- "PR"
+data.maize.deral$dataset = "DERAL"
 
-  filteredDescr <- filter(dataset_sub)
+data.soy.deral<- data.soy.deral[,c('Município','harvest','yield')]
+colnames(data.soy.deral) <-  c("City","Year","Yield")
+data.soy.deral$UF <- "PR"
+data.soy.deral$dataset = "DERAL"
 
-  #======================================================================================================
-  # Temporal k-fold to avoid overfitting
+data.maize.gdhy <- data.maize.gdhy[,c('state','city','year','yield')]
+colnames(data.maize.gdhy) <- c("UF","City","Year","Yield")
+data.maize.gdhy$dataset = "GDHY"
 
-  #------------------------------------------------------
-  # Window 30% of the number of years
+data.soy.gdhy <- data.soy.gdhy[,c('state','city','year','yield')]
+colnames(data.soy.gdhy) <- c("UF","City","Year","Yield")
+data.soy.gdhy$dataset = "GDHY"
 
-  window = round(length(unique(dataset_sub$Year))*0.30,digits=0)
+#======================================================================================================
+# Merge function
 
-  # Horizon 20% of the window
-  horizon = round(window*0.20,digits=0)+1
+br <- read_municipality() ## Load sf data for brazilian municipalities
 
-
-  #======================================================================================================
-  # Temporal k-fold to avoid overfitting
-
-  ctrl <- trainControl(method = "timeslice",
-                       initialWindow = window,
-                       horizon = horizon,
-                       fixedWindow = TRUE,
-                       savePredictions = T,
-                       search = "random"
-  )
-
-
-  #======================================================================================================
-  # Train (80%) test (20%) split
-
-  year_max <- max(dataset_sub$Year)
-  cut_year <- year_max-length(round(unique(dataset_sub$Year),digits=0))*0.2
-  cut_year <- round(cut_year,digits = 0)
-
-  train <- dataset_sub %>% subset(Year <= cut_year)
-  test  <- dataset_sub %>% subset(Year > cut_year)
-
-
-  #======================================================================================================
-  # Train model
-
-  tuneLength <- 20
-
-  model <- train(Yield_corrected ~ .,
-                 data = train[filteredDescr],
-                 method = "rf",
-                 tuneLength=20,
-                 metric="RMSE",
-                 maximize=F,
-                 preProc = c("center", "scale"),
-                 trControl = ctrl
-  )
-
-  #------------------------------------------------------
-  # Add model to a list
-
-  RFModel_soybean[[i]] <- model
-  var_importance[[i]] <-  varImp(model)
-  performance[[i]] <-  postResample(predict(model,test),test$Yield_corrected)
-
-
+merge_function <- function(data,city = "City",state = "UF"){
+  data[,"City"] <- strip(data[,"City"], char.keep = NULL, digit.remove = TRUE,
+                                     apostrophe.remove = TRUE, lower.case = TRUE) %>%
+    iconv(., from = 'UTF-8', to = 'ASCII//TRANSLIT')
+  merge(data,
+        br %>%
+          mutate(name_muni = strip(name_muni, char.keep = NULL, digit.remove = TRUE,
+                                   apostrophe.remove = TRUE, lower.case = TRUE)) %>%
+          mutate(name_muni = iconv(name_muni, from = 'UTF-8', to = 'ASCII//TRANSLIT')),
+        by.x=c(city,state),
+        by.y=c('name_muni','abbrev_state')) -> new_data
+  return(new_data)
 }
 
 
 #======================================================================================================
-# Maize
+# Build a crop dataset
+
+soybean <- rbind(data.soy.deral,
+                 data.soy.gdhy,
+                 data.soy.ibge)
+
+
+maize <- rbind(data.maize.deral,
+               data.maize.gdhy,
+               data.maize.ibge)
+
+
+soybean <- merge_function(soybean)
+maize <- merge_function(maize)
 
 #======================================================================================================
-# Create empty vectors and lists
+# Remove Trend
+
+year_min <- 10 # minimum number of years to include municipality in the dataset
+
+# Test for trend
+
+soybean <- soybean %>%
+  filter(is.na(Yield)==F) %>%
+  group_by(City,UF,dataset) %>%
+  filter(length(City) > year_min) %>%
+  mutate(trend = ifelse(Kendall(Year, Yield)$sl[1] < 0.05,"Trend","No Trend"),
+         tau = Kendall(Year, Yield)$tau[1])
+
+maize <- maize %>%
+  filter(is.na(Yield)==F) %>%
+  group_by(City,UF,dataset) %>%
+  filter(length(City) > year_min) %>%
+  mutate(trend = ifelse(Kendall(Year, Yield)$sl[1] < 0.05,"Trend","No Trend"),
+         tau = Kendall(Year, Yield)$tau[1])
+
+# Detrend series
+
+crop_yield_detrend <- function(Yield,Year){
+  model <- loess(Yield~Year, se = TRUE)
+  Yield-predict(model,data.frame(Yield=Yield,Year=Year))
+}
+
+soybean <- soybean %>%
+  group_by(City,UF,dataset) %>%
+  filter(length(City) > year_min) %>%
+  mutate(Yield_detrended = crop_yield_detrend(Yield,Year))
+
+maize <- maize %>%
+  group_by(City,UF,dataset) %>%
+  filter(length(City) > year_min) %>%
+  mutate(yield_detrended = crop_yield_detrend(Yield,Year))
 
 
-n_models <- dataset_maize[,c("UF","dataset")] %>% unique()
+#======================================================================================================
+# Test for Heteroscedasticity
 
-list_length <- n_models %>% nrow()
+soybean <- soybean %>%
+  group_by(City,UF,dataset) %>%
+  mutate(Hetero = bptest(Yield~Year)$p.value,
+         Hetero = ifelse(Hetero < 0.05,"Heteroskedastic","Homoscedastic"))
 
-RFModel_maize[[i]] <- vector('list', list_length)
-var_importance_maize[[i]] <-  vector('list', list_length)
-performance_maize[[i]] <-  vector('list', list_length)
-
-for(i in 1:list_length){
-
-  #======================================================================================================
-  # Sub-set dataset
-
-  dataset_sub <- dataset_maize %>%
-    subset(UF == n_models[i,]$UF,
-           dataset == n_models[i,]$dataset) %>%
-    subset(Year > 1997)
-
-  #======================================================================================================
-  # Pre-process
-  
-  filteredDescr <- filter(dataset_sub)
-  
-  #======================================================================================================
-  # Temporal k-fold to avoid overfitting
-  
-  #------------------------------------------------------
-  # Window 30% of the number of years
-  
-  window = round(length(unique(dataset_sub$Year))*0.30,digits=0)
-  
-  # Horizon 20% of the window
-  horizon = round(window*0.20,digits=0)+1
-  
-  
-  #======================================================================================================
-  # Temporal k-fold to avoid overfitting
-  
-  ctrl <- trainControl(method = "timeslice",
-                       initialWindow = window,
-                       horizon = horizon,
-                       fixedWindow = TRUE,
-                       savePredictions = T,
-                       search = "random"
-  )
-  
-  
-  #======================================================================================================
-  # Train (80%) test (20%) split
-  
-  year_max <- max(dataset_sub$Year)
-  cut_year <- year_max-length(round(unique(dataset_sub$Year),digits=0))*0.2
-  cut_year <- round(cut_year,digits = 0)
-  
-  train <- dataset_sub %>% subset(Year <= cut_year)
-  test  <- dataset_sub %>% subset(Year > cut_year)
-  
-  
-  #======================================================================================================
-  # Train model
-  
-  tuneLength <- 20
-  
-  model <- train(Yield_corrected ~ .,
-                 data = train[filteredDescr],
-                 method = "rf",
-                 tuneLength=20,
-                 metric="RMSE",
-                 maximize=F,
-                 preProc = c("center", "scale"),
-                 trControl = ctrl
-  )
-  
-  #------------------------------------------------------
-  # Add model to a list
-  
-  RFModel_maize[[i]] <- model
-  var_importance_maize[[i]] <-  varImp(model)
-  performance_maize[[i]] <-  postResample(predict(model,test),test$Yield_corrected)
-  
+maize <- maize %>%
+  group_by(City,UF,dataset) %>%
+  mutate(Hetero = bptest(Yield~Year)$p.value,
+         Hetero = ifelse(Hetero < 0.05,"Heteroskedastic","Homoscedastic"))
 
 
+# Remove Heteroscedasticity
+crop_yield_heteroscedasticity <- function(Yield,Year,hetero){
+
+  model <- loess(Yield~Year)
+  y_max <- max(Year)-1
+  if(hetero == "Homoscedastic"){
+
+    (Yield-predict(model,data.frame(Yield=Yield,Year=Year)))+
+      predict(model,data.frame(Year=y_max))
+
+  }else{
+
+    (1+(Yield-predict(model,data.frame(Yield=Yield,Year=Year)))/
+       predict(model,data.frame(Yield=Yield,Year=Year)))*
+      predict(model,data.frame(Year=y_max))
+  }
+}
+
+soybean %>%
+  group_by(City,UF,dataset) %>%
+  summarise(n = n()) %>% summary()
+
+soybean <- soybean %>%
+  group_by(City,UF,dataset) %>%
+  mutate(Yield_corrected = crop_yield_heteroscedasticity(Yield,Year,first(Hetero)))
+
+maize <- maize %>%
+  group_by(City,UF,dataset) %>%
+  mutate(Yield_corrected = crop_yield_heteroscedasticity(Yield,Year,first(Hetero)))
+
+#======================================================================================================
+# Remove outliers and calculate spatial blocks
+
+
+#======================================================================================================
+# Load climate indices
+
+indices_soy <- fread("soybean_indices.csv")
+indices_maize <- fread("maize_indices.csv")
+
+
+#======================================================================================================
+# Build final dataset with crop yield and climate indices
+
+
+dataset_soybean <- merge(soybean,
+                 indices_soy,
+                 by.x = c("code_muni","Year"),
+                 by.y = c("name_mn","harvesting"))%>% na.omit()
+
+dataset_maize <- merge(maize,
+                 indices_soy,
+                 by.x = c("code_muni","Year"),
+                 by.y = c("name_mn","harvesting"))%>% na.omit()
+
+
+
+normalize <- function(x){
+  (x-min(x))/(max(x)-min(x))
 }
 
 
-## When you are done:
-stopCluster(cl)
+ggplot(dataset_soybean %>%
+         subset(City == "toledo") %>%
+         group_by(dataset) %>%
+         mutate(Yield = normalize(Yield),
+                Yield_corrected = normalize(Yield_corrected),
+                Yield_detrended = normalize(Yield_detrended)))+
+  geom_line(aes(Year,Yield))+
+  geom_line(aes(Year,Yield_corrected),col='red')+
+  geom_line(aes(Year,Yield_detrended),col='blue')+
+  facet_wrap(~dataset,scales="free")
+
+
+
+
+

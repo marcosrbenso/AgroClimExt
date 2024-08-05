@@ -1,6 +1,6 @@
 #  Random forest model for crop yield losses predictions
 
-# The objective of this script is to run RF model 
+# The objective of this script is to run RF model
 # for evaluating the impact of climate extremes on crop yields
 
 # Marcos Benso, Ago 2024
@@ -24,32 +24,37 @@ output <- "C:\\Projetos\\ClimateImpactML\\Data\\Output\\Step1\\"
 #======================================================================================================
 # Pre-processing function
 
-filter <-function(merged_dataset){
-  
+filter <-function(dataset_sub){
+  if("trend" %in% colnames(dataset_sub)){
+    dataset_sub <- dataset_sub %>% ungroup() %>%
+      select(-c(Year,Hetero,tau,trend,
+                code_muni,Yield_detrended,
+                City,UF,Yield,code_state,lat,geom,
+                clay,silt,sand))
+  }
+  else{
+    dataset_sub <- dataset_sub %>% ungroup() %>%
+      select(-c(Year,Hetero,tau,
+                code_muni,Yield_detrended,
+                City,UF,Yield,code_state,lat,geom,
+                clay,silt,sand))
+  }
   #------------------------------------------------------
   # Remove near Zero variance features
-  nzv <- nearZeroVar(merged_dataset %>% ungroup() %>%
-                       select(-c(Year,flag,block_id,
-                                 code_muni,
-                                 City,UF,Yield,code_state,lat,geom,
-                                 clay,silt,sand)))
-  
-  
-  
-  filteredDescr <- merged_dataset[, -nzv] %>% ungroup() %>%
-    select(-c(Year,flag,block_id,
-              code_muni,
-              City,UF,Yield,code_state,lat,geom,
-              clay,silt,sand))
-  
+  nzv <- nearZeroVar(dataset_sub)
+
+
+
+  filteredDescr <- dataset_sub[, -nzv]
+
   #------------------------------------------------------
   # Remove highly correlated variables
   descrCor <-  cor(filteredDescr)
-  
+
   highCorr <- sum(abs(descrCor[upper.tri(descrCor)]) > .99)
-  
+
   highlyCorDescr <- findCorrelation(descrCor, cutoff = .99)
-  
+
   filteredDescr <- filteredDescr[,-highlyCorDescr]
   return(colnames(filteredDescr))
 }
@@ -75,46 +80,44 @@ registerDoParallel(cl)
 #======================================================================================================
 # Create empty vectors and lists
 
-var_importance <- c()
-
 n_models <- dataset_soybean[,c("UF","dataset")] %>% unique()
 
 list_length <- n_models %>% nrow()
 
 RFModel_soybean <- vector('list', list_length)
+var_importance <-  vector('list', list_length)
+performance <-  vector('list', list_length)
 
 for(i in 1:list_length){
-  
-  
-  
+
   #======================================================================================================
   # Sub-set dataset
-  
+
   dataset_sub <- dataset_soybean %>%
-    subset(UF == n_models[i,]$UF,
+    subset(UF == n_models[i,]$UF &
            dataset == n_models[i,]$dataset) %>%
     subset(Year > 1997)
-  
+
   #======================================================================================================
   # Pre-process
-  
+
   filteredDescr <- filter(dataset_sub)
-  
+
   #======================================================================================================
   # Temporal k-fold to avoid overfitting
-  
+
   #------------------------------------------------------
   # Window 30% of the number of years
-  
-  window = round(length(unique(dataset_sub$Year))*0.30,digits=0) 
-  
+
+  window = round(length(unique(dataset_sub$Year))*0.30,digits=0)
+
   # Horizon 20% of the window
-  horizon = round(window*0.20,digits=0)
-  
-  
+  horizon = round(window*0.20,digits=0)+1
+
+
   #======================================================================================================
-  # Temporal k-fold to avoid overfitting 
-  
+  # Temporal k-fold to avoid overfitting
+
   ctrl <- trainControl(method = "timeslice",
                        initialWindow = window,
                        horizon = horizon,
@@ -122,50 +125,40 @@ for(i in 1:list_length){
                        savePredictions = T,
                        search = "random"
   )
-  
-  
+
+
   #======================================================================================================
   # Train (80%) test (20%) split
-  
+
   year_max <- max(dataset_sub$Year)
   cut_year <- year_max-length(round(unique(dataset_sub$Year),digits=0))*0.2
-  
+  cut_year <- round(cut_year,digits = 0)
+
   train <- dataset_sub %>% subset(Year <= cut_year)
   test  <- dataset_sub %>% subset(Year > cut_year)
-  
-  
+
+
   #======================================================================================================
   # Train model
-  
+
   tuneLength <- 20
-  
-  model <- train(Yield_detrended ~ .,
-                       data = train[filteredDescr],
-                       method = "cforest",
-                       tuneLength=20,
-                       metric="RMSE",
-                       maximize=F,
-                       preProc = c("center", "scale"),
-                       trControl = ctrl
+
+  model <- train(Yield_corrected ~ .,
+                 data = train[filteredDescr],
+                 method = "cforest",
+                 tuneLength=20,
+                 preProc = c("center", "scale"),
+                 trControl = ctrl
   )
-  
+
   #------------------------------------------------------
   # Add model to a list
-  
-  
-  RFModel_Vector[[i]] <- model
-  
-  #======================================================================================================
-  # Variable importance
-  
-  var_importance_new <- varImp(model)
-  
-  png(filename=paste(output,"Soybean","Variable Importance",uf,dataset,sep='_'))
-  plot(varImp(model), top = 20,
-       main=paste("Variable Importance",uf,dataset,"Soybean"))
-  dev.off()
-  
-  
+
+  RFModel_soybean[[i]] <- model
+  var_importance[[i]] <-  varImp(model)
+  performance[[i]] <-  postResample(predict(model,test),test$Yield_corrected)
+
+
 }
 
 
@@ -175,47 +168,45 @@ for(i in 1:list_length){
 #======================================================================================================
 # Create empty vectors and lists
 
-var_importance <- c()
 
-n_models <- dataset_soybean[,c("UF","dataset")] %>% unique()
+n_models <- dataset_maize[,c("UF","dataset")] %>% unique()
 
 list_length <- n_models %>% nrow()
 
-RFModel_soybean <- vector('list', list_length)
-
+RFModel_maize <- vector('list', list_length)
+var_importance_maize <-  vector('list', list_length)
+performance_maize <-  vector('list', list_length)
 
 for(i in 1:list_length){
-  
-  
-  
+
   #======================================================================================================
   # Sub-set dataset
-  
-  dataset_sub <- dataset_soybean %>%
-    subset(UF == n_models[i,]$UF,
+
+  dataset_sub <- dataset_maize %>%
+    dplyr::filter(UF == n_models[i,]$UF,
            dataset == n_models[i,]$dataset) %>%
-    subset(Year > 1997)
-  
+    dplyr::filter(Year >= 1997)
+
   #======================================================================================================
   # Pre-process
-  
+
   filteredDescr <- filter(dataset_sub)
-  
+
   #======================================================================================================
   # Temporal k-fold to avoid overfitting
-  
+
   #------------------------------------------------------
   # Window 30% of the number of years
-  
-  window = round(length(unique(dataset_sub$Year))*0.30,digits=0) 
-  
+
+  window = round(length(unique(dataset_sub$Year))*0.30,digits=0)
+
   # Horizon 20% of the window
-  horizon = round(window*0.20,digits=0)
-  
-  
+  horizon = round(window*0.20,digits=0)+1
+
+
   #======================================================================================================
-  # Temporal k-fold to avoid overfitting 
-  
+  # Temporal k-fold to avoid overfitting
+
   ctrl <- trainControl(method = "timeslice",
                        initialWindow = window,
                        horizon = horizon,
@@ -223,53 +214,50 @@ for(i in 1:list_length){
                        savePredictions = T,
                        search = "random"
   )
-  
-  
+
+
   #======================================================================================================
   # Train (80%) test (20%) split
-  
+
   year_max <- max(dataset_sub$Year)
   cut_year <- year_max-length(round(unique(dataset_sub$Year),digits=0))*0.2
-  
+  cut_year <- round(cut_year,digits = 0)
+
   train <- dataset_sub %>% subset(Year <= cut_year)
   test  <- dataset_sub %>% subset(Year > cut_year)
-  
-  
+
+
   #======================================================================================================
   # Train model
-  
+
   tuneLength <- 20
-  
-  model <- train(Yield_detrended ~ .,
+
+  model <- train(Yield_corrected ~ .,
                  data = train[filteredDescr],
-                 method = "cforest",
+                 method = "rf",
                  tuneLength=20,
                  metric="RMSE",
                  maximize=F,
                  preProc = c("center", "scale"),
                  trControl = ctrl
   )
-  
+
   #------------------------------------------------------
   # Add model to a list
-  
-  
-  RFModel_Vector[[i]] <- model
-  
-  #======================================================================================================
-  # Variable importance
-  
-  var_importance_new <- varImp(model)
-  
-  png(filename=paste(output,"Maize","Variable Importance",uf,dataset,sep='_'))
-  plot(varImp(model), top = 20,
-       main=paste("Variable Importance",uf,dataset,"Maize"))
-  dev.off()
-  
-  
+
+  RFModel_maize[[i]] <- model
+  var_importance_maize[[i]] <-  varImp(model)
+  performance_maize[[i]] <-  postResample(predict(model,test),test$Yield_corrected)
+
+
+
 }
 
+lapply(RFModel_soybean,global_validation)
+lapply(RFModel_maize,global_validation)
 
+resamples(RFModel_soybean)
+boxplot(RFModel_soybean[[2]]$resample$Rsquared)
 
 ## When you are done:
 stopCluster(cl)

@@ -211,14 +211,18 @@ indices_maize <- fread("maize_indices.csv")
 dataset_soybean <- merge(soybean,
                  indices_soy,
                  by.x = c("code_muni","Year"),
-                 by.y = c("name_mn","harvesting"))%>% na.omit()
+                 by.y = c("name_mn","harvesting"))%>% na.omit() %>%
+  st_drop_geometry() %>% select(-geom)
 
 dataset_maize <- merge(maize,
-                 indices_soy,
+                 indices_maize,
                  by.x = c("code_muni","Year"),
-                 by.y = c("name_mn","harvesting"))%>% na.omit()
+                 by.y = c("name_mn","harvesting"))%>% na.omit() %>%
+  st_drop_geometry() %>% select(-geom)
 
 
+fwrite(dataset_soybean, 'dataset_soybean.csv')
+fwrite(dataset_maize,   'dataset_maize.csv')
 
 
 normalize <- function(x){
@@ -241,3 +245,30 @@ ggplot(dataset_soybean %>%
 
 
 
+
+Em ter., 3 de set. de 2024 às 05:29, E Mario Mendiondo <e.mario.mendiondo@gmail.com> escreveu:
+Prezado Marcos
+Cc coautores 
+
+Bom dia. Neste pedido de revisão deste manuscrito em coautoria (https://egusphere.copernicus.org/preprints/2024/egusphere-2023-3002/egusphere-2023-3002.pdf ) para responder até 17/09/2024 , avise se precisa de ajuda.
+
+Um abraço 
+
+Mário. 
+
+
+Início da mensagem encaminhada:
+
+De: editorial@copernicus.org
+Data: 3 de setembro de 2024 às 01:59:34 BRT
+Para: e.mario.mendiondo@gmail.com
+Cc: editor@mailarchive.copernicus.org
+Assunto: Reminder egusphere-2023-3002 (author) - manuscript needs Major revisions
+
+A data-driven framework for assessing climatic impact-drivers in the context of food security
+
+
+--
+Marcos Roberto Benso
+Engenheiro sanitarista e pesquisador em recursos hídricos e clima.
+Em busca por uma sociedade resiliente e justa.
